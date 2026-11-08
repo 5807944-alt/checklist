@@ -320,7 +320,7 @@ let items=[
 ];
 let idleMs=0, dayKey='', days={}, lastBackup='', alarmLv='보통';
 
-let active=null, running=false, tick0=0, alarmed=false, saveT=0;
+let active=null, running=false, tick0=0, alarmed=false, saveT=0, needRender=false;
 const $=i=>document.getElementById(i);
 const pad=n=>String(n).padStart(2,'0');
 const fmt=ms=>{const s=Math.floor(Math.abs(ms)/1000);
@@ -461,7 +461,7 @@ function render(){
     const paused=on&&!running, elapsed=it.ms>0;
     const sl=it.sleepItem;
     return `<div data-row="${it.id}" class="row ty-${T.cls} ${it.id===draftId?'draft':''} ${on&&running?'run':''} ${paused?'pau':''} ${it.done?'done':''} ${sl?'slp':''} ${it.type==='free'?'acc':''}">
-      <div class="chk ${it.done?'on':''}" data-chk="${it.id}" ${sl?'style="visibility:hidden"':''}></div>
+      <div class="chk ${(it.done||(T.unit&&unitsOf(it)>=1))?'on':''}" data-chk="${it.id}" ${sl?'style="visibility:hidden"':''}></div>
       <div class="ncell"><input class="nm" value="${it.name}" data-nm="${it.id}" placeholder="항목 이름">
         ${elapsed?`<i class="el ${paused?'p':''}">${hm(it.ms)}${T.unit?`·${unitsOf(it)}건`:''}</i>`:''}</div>
       <div class="meta">
@@ -725,8 +725,12 @@ function paint(){
   const over  = T.deadline && it.ms>=std;
   if(T.unit){                              // 배수를 지날 때마다 1건, 그때 알람
     const k=Math.floor(it.ms/std);
-    if(k>(it.alarmN||0)){ it.alarmN=k; if(it.alarm)beep(it.name); }
-  } else if(over&&it.alarm&&!alarmed){ alarmed=true; beep(it.name); }
+    if(k>(it.alarmN||0)){ it.alarmN=k; if(it.alarm)beep(it.name); needRender=true; }
+  } else if(over&&!alarmed){               // 시간제한 — 채우면 자동 완료
+    alarmed=true;
+    if(it.alarm)beep(it.name);
+    if(it.type==='timed'&&!it.done&&!it.sleepItem){ it.done=true; save(); needRender=true; }
+  }
   c.className='clock t-'+T.cls+(over&&it.alarm?' alarm':'');
   $('cTm').textContent=fmt(shown);
   $('cTm').className='tm'+(shown<0?' over':'');
@@ -736,6 +740,7 @@ function paint(){
   $('bTog').textContent='❚❚';
   paintPip('t-'+T.cls, fmt(shown), it.name+(over?' · 초과':''),
     over&&it.alarm, true);
+  if(needRender){ needRender=false; render(); }
 }
 let idleFrom=Date.now();
 function idleStreakMs(){ return Date.now()-idleFrom; }
