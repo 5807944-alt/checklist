@@ -185,6 +185,7 @@ select,.mins{border:1px solid var(--line);border-radius:6px;background:#fff;font
 .clock button{border:0;border-radius:10px;padding:11px 15px;font-family:inherit;font-size:16px;font-weight:700;cursor:pointer}
 .bEnd{background:rgba(255,255,255,.95);color:var(--ink)}
 .bTog{background:rgba(255,255,255,.22);color:#fff;min-width:50px}
+.bPop{background:rgba(255,255,255,.16);color:#fff;padding:11px 12px!important}
 @keyframes bl{0%,100%{filter:brightness(1)}50%{filter:brightness(1.75)}}
 .clock.alarm{animation:bl .55s infinite}
 
@@ -264,6 +265,14 @@ select,.mins{border:1px solid var(--line);border-radius:6px;background:#fff;font
     <select id="sPrep"></select></label>
   <label>준비·전환 표준시간 (분)
     <input type="number" id="sPrepMin" min="1"></label>
+  <label>알람 소리
+    <select id="sLv">
+      <option>조용히</option><option>보통</option><option>강하게</option>
+    </select></label>
+  <div class="brow" style="margin-bottom:8px">
+    <button class="ghost2" id="sTest">소리 확인</button>
+    <button class="ghost2" id="sNoti">알림 허용</button>
+  </div>
   <div id="sInfo"></div>
   <div class="brow" style="margin-bottom:6px">
     <button class="ghost2" id="exp">내보내기</button>
@@ -285,6 +294,7 @@ select,.mins{border:1px solid var(--line);border-radius:6px;background:#fff;font
     <span class="nm2"><b id="cNm">대기 중</b><span id="cSub"></span></span>
     <button class="bTog" id="bTog" style="display:none">❚❚</button>
     <button class="bEnd" id="bEnd" style="display:none">End</button>
+    <button class="bPop" id="bPop" title="시계를 창으로 분리">⧉</button>
   </div>
 </div>
 
@@ -308,7 +318,7 @@ let items=[
   {id:uid++,name:'중국어',        type:'timed',std:25, alarm:true,  daily:true, ms:0,done:false},
   {id:uid++,name:'독서',          type:'free', std:30, alarm:false,daily:true, ms:0,done:false}
 ];
-let idleMs=0, dayKey='', days={}, lastBackup='';
+let idleMs=0, dayKey='', days={}, lastBackup='', alarmLv='보통';
 
 let active=null, running=false, tick0=0, alarmed=false, saveT=0;
 const $=i=>document.getElementById(i);
@@ -363,7 +373,7 @@ function tally(){
 
 /* ---- 저장 ---- */
 function save(){
-  try{localStorage.setItem(KEY,JSON.stringify({uid,items,idleMs,dayKey,dayBoundary,days,lastBackup}));
+  try{localStorage.setItem(KEY,JSON.stringify({uid,items,idleMs,dayKey,dayBoundary,days,lastBackup,alarmLv}));
     const t=new Date(); note(`${pad(t.getHours())}:${pad(t.getMinutes())} 저장`);}
   catch(e){note('저장 불가 — 브라우저가 막고 있습니다',true);}
 }
@@ -376,6 +386,7 @@ function load(){
     if(d.dayBoundary)dayBoundary=d.dayBoundary;
     if(d.days&&typeof d.days==='object')days=d.days;
     if(d.lastBackup)lastBackup=d.lastBackup;
+    if(d.alarmLv)alarmLv=d.alarmLv;
     return true;}
   catch(e){return false;}
 }
@@ -414,8 +425,25 @@ let draftId=null;                    // 입력 중인 새 항목 — 자리 잡�
 const sortKey=it=> it.id===draftId ? [3,0,0]
   : it.sleepItem ? [0,0,0]
   : [ (TYPES[it.type].deadline&&it.done) ? 2 : 1, TORD[it.type], items.indexOf(it) ];
-let query='';
-const hit=it=>!query || it.name.toLowerCase().includes(query);
+/* 검색 — 초성으로도 찾는다. 'ㅈㄱㅇ' → 중국어, '중ㄱ' 처럼 섞어 써도 된다 */
+const CHO='ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ';
+const u4=n=>'\\u'+n.toString(16).padStart(4,'0');
+function makeRe(q){
+  if(!q)return null;
+  let src='';
+  for(const ch of q){
+    const i=CHO.indexOf(ch);
+    if(i>=0){                            // 홀로 쓴 자음 → 그 초성으로 시작하는 모든 글자
+      const st=0xAC00+i*588;
+      src+='['+ch+u4(st)+'-'+u4(st+587)+']';
+    }else{
+      src+=ch.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    }
+  }
+  try{ return new RegExp(src,'i'); }catch(e){ return null; }
+}
+let query='', queryRe=null;
+const hit=it=>!query || (queryRe ? queryRe.test(it.name) : true);
 function ordered(){                    // 준비·전환은 헤더 버튼으로만 쓰므로 목록에서 숨김
   return items.filter(i=>!i.prepItem && (i.id===draftId||hit(i))).sort((a,b)=>{
     const x=sortKey(a), y=sortKey(b);
@@ -617,7 +645,8 @@ $('nagSkip').onclick=()=>{ nagOff=true; checkNag(); };
 
 /* ---- 검색 ---- */
 function setQuery(v){
-  query=v.trim().toLowerCase();
+  query=v.trim();
+  queryRe=makeRe(query);
   $('q').parentElement.classList.toggle('has',!!query);
   render();
 }
@@ -686,6 +715,8 @@ function paint(){
     $('bTog').style.display = it?'':'none';
     $('bEnd').style.display = it?'':'none';
     $('bTog').textContent='▶';
+    paintPip('t-idle', fmt(idleStreakMs()),
+      it ? it.name+' — 일시정지' : '대기 중', false, !!it);
     return;
   }
   const T=TYPES[it.type], std=Math.max(1,(it.std||0)*60000);
@@ -694,8 +725,8 @@ function paint(){
   const over  = T.deadline && it.ms>=std;
   if(T.unit){                              // 배수를 지날 때마다 1건, 그때 알람
     const k=Math.floor(it.ms/std);
-    if(k>(it.alarmN||0)){ it.alarmN=k; if(it.alarm)beep(); }
-  } else if(over&&it.alarm&&!alarmed){ alarmed=true; beep(); }
+    if(k>(it.alarmN||0)){ it.alarmN=k; if(it.alarm)beep(it.name); }
+  } else if(over&&it.alarm&&!alarmed){ alarmed=true; beep(it.name); }
   c.className='clock t-'+T.cls+(over&&it.alarm?' alarm':'');
   $('cTm').textContent=fmt(shown);
   $('cTm').className='tm'+(shown<0?' over':'');
@@ -703,6 +734,8 @@ function paint(){
   $('cSub').textContent = T.mode==='cycle' ? `${unitsOf(it)}건 · ${hm(it.ms)}` : '';
   $('bTog').style.display=''; $('bEnd').style.display='';
   $('bTog').textContent='❚❚';
+  paintPip('t-'+T.cls, fmt(shown), it.name+(over?' · 초과':''),
+    over&&it.alarm, true);
 }
 let idleFrom=Date.now();
 function idleStreakMs(){ return Date.now()-idleFrom; }
@@ -714,13 +747,53 @@ function idleStreakMs(){ return Date.now()-idleFrom; }
   },200);
 })();
 
-function beep(){
-  try{const a=new (window.AudioContext||window.webkitAudioContext)();
-    const o=a.createOscillator(), g=a.createGain();
-    o.connect(g); g.connect(a.destination); o.frequency.value=880;
-    g.gain.setValueAtTime(.18,a.currentTime);
-    g.gain.exponentialRampToValueAtTime(.001,a.currentTime+.9);
-    o.start(); o.stop(a.currentTime+.9);}catch(e){}
+/* ---- 알람 ----
+   오디오는 사용자가 한 번 화면을 건드려야 열린다. 첫 탭에서 미리 열어 둔다. */
+let actx=null;
+function audioCtx(){
+  try{
+    if(!actx) actx=new (window.AudioContext||window.webkitAudioContext)();
+    if(actx.state==='suspended') actx.resume();
+    return actx;
+  }catch(e){ return null; }
+}
+addEventListener('pointerdown',()=>audioCtx(),{once:true,capture:true});
+
+const LV={   // 강도별 — 볼륨, 반복 횟수, 진동
+  '조용히':{g:.07,n:2,v:[120]},
+  '보통'  :{g:.22,n:4,v:[180,90,180]},
+  '강하게':{g:.45,n:8,v:[300,120,300,120,300]}
+};
+function tone(at,dur,freq,gain){
+  const a=audioCtx(); if(!a)return;
+  const o=a.createOscillator(), g=a.createGain();
+  o.type='sine'; o.frequency.value=freq;
+  o.connect(g); g.connect(a.destination);
+  const t=a.currentTime+at;
+  g.gain.setValueAtTime(0.0001,t);
+  g.gain.exponentialRampToValueAtTime(gain,t+0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  o.start(t); o.stop(t+dur+0.05);
+}
+function beep(label){
+  const L=LV[alarmLv]||LV['보통'];
+  for(let i=0;i<L.n;i++){
+    tone(i*0.42, 0.30, i%2 ? 1046 : 784, L.g);   // 솔–도 번갈아
+  }
+  try{ if(navigator.vibrate) navigator.vibrate(L.v); }catch(e){}
+  notify(label);
+}
+/* 앱이 뒤에 있을 때도 알리기 */
+function notify(label){
+  if(!label) return;
+  try{
+    if(!('Notification' in window) || Notification.permission!=='granted') return;
+    const opt={body:'표준시간이 되었습니다', tag:'checklist-alarm',
+      renotify:true, icon:'icon-192.png', badge:'icon-192.png'};
+    if(navigator.serviceWorker && navigator.serviceWorker.ready)
+      navigator.serviceWorker.ready.then(r=>r.showNotification(label,opt)).catch(()=>{});
+    else new Notification(label,opt);
+  }catch(e){}
 }
 
 function settleDraft(){                 // 이름 없이 떠나면 행을 지운다
@@ -828,6 +901,62 @@ function openText(mode){                 // 'copy' | 'paste'
 }
 $('txtExp').onclick=()=>openText('copy');
 $('txtImp').onclick=()=>openText('paste');
+/* ---- 시계 떼어내기 ----
+   크롬·엣지의 Document Picture-in-Picture: 항상 위에 뜨는 작은 창.
+   안드로이드 크롬에는 없다. */
+let pipWin=null, pipEls=null;
+const PIP_CSS=`
+  *{box-sizing:border-box;margin:0}
+  body{font-family:"Gothic A1",system-ui,sans-serif;background:#2559C7;color:#fff;
+    height:100vh;display:flex;align-items:center;gap:10px;padding:0 12px;
+    transition:background .2s;cursor:default;user-select:none}
+  body.t-task{background:#2559C7}body.t-timed{background:#12784A}
+  body.t-free{background:#8A6BB0}body.t-idle{background:#7B8794}
+  @keyframes bl{0%,100%{filter:brightness(1)}50%{filter:brightness(1.8)}}
+  body.alarm{animation:bl .5s infinite}
+  #t{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:30px;font-weight:700;
+    letter-spacing:-.01em;flex:none}
+  #n{flex:1;min-width:0;font-size:15px;font-weight:700;
+    overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  button{border:0;border-radius:9px;font-family:inherit;font-size:14px;font-weight:700;
+    padding:9px 12px;cursor:pointer}
+  #p{background:rgba(255,255,255,.24);color:#fff;min-width:44px}
+  #e{background:rgba(255,255,255,.95);color:#14181F}`;
+
+async function popOut(){
+  if(!('documentPictureInPicture' in window)){
+    alert('이 브라우저는 시계 분리를 지원하지 않습니다.\n\nPC의 크롬 또는 엣지에서 쓸 수 있습니다. 폰에서는 설정에서 알림을 허용해 두면 앱이 뒤에 있어도 알람을 받습니다.');
+    return;
+  }
+  if(pipWin){ pipWin.close(); return; }
+  try{
+    pipWin=await documentPictureInPicture.requestWindow({width:340,height:76});
+  }catch(e){ pipWin=null; return; }
+  const d=pipWin.document;
+  d.head.innerHTML=`<meta charset="utf-8"><title>실행 시계</title>
+    <link href="https://fonts.googleapis.com/css2?family=Gothic+A1:wght@400;700&family=JetBrains+Mono:wght@700&display=swap" rel="stylesheet">
+    <style>${PIP_CSS}</style>`;
+  d.body.innerHTML=`<span id="t">00:00</span><span id="n">대기 중</span>
+    <button id="p">❚❚</button><button id="e">End</button>`;
+  pipEls={b:d.body,t:d.getElementById('t'),n:d.getElementById('n'),
+          p:d.getElementById('p'),e:d.getElementById('e')};
+  pipEls.p.onclick=()=>{ if(active){ running=!running; save(); render(); } };
+  pipEls.e.onclick=()=>{ if(active) end(); };
+  pipWin.addEventListener('pagehide',()=>{ pipWin=null; pipEls=null; $('bPop').textContent='⧉'; });
+  $('bPop').textContent='⤡';
+}
+$('bPop').onclick=popOut;
+
+function paintPip(cls,tm,nm,alarm,showBtn){
+  if(!pipEls)return;
+  pipEls.b.className=cls+(alarm?' alarm':'');
+  pipEls.t.textContent=tm;
+  pipEls.n.textContent=nm;
+  pipEls.p.textContent=running?'❚❚':'▶';
+  pipEls.p.style.display=showBtn?'':'none';
+  pipEls.e.style.display=showBtn?'':'none';
+}
+
 /* ---- 스크롤 위치 기억 ---- */
 const SKEY=KEY+'.scroll';
 let scrT=0;
@@ -845,6 +974,7 @@ window.addEventListener('beforeunload',()=>{
 
 function syncSleepUI(){
   $('sDay').value=dayBoundary;
+  $('sLv').value=alarmLv;
   const pr=prepItem();
   $('sPrep').innerHTML=items.filter(i=>!i.sleepItem)
     .map(i=>`<option value="${i.id}" ${i.prepItem?'selected':''}>${i.name||'(이름 없음)'}</option>`).join('');
@@ -862,6 +992,13 @@ $('sPrep').onchange=()=>{
   items.forEach(i=>delete i.prepItem);
   const it=items.find(i=>i.id===id); if(it)it.prepItem=true;
   save(); syncSleepUI(); render();
+};
+$('sLv').onchange=()=>{ alarmLv=$('sLv').value; save(); beep(); };
+$('sTest').onclick=()=>beep();
+$('sNoti').onclick=async()=>{
+  if(!('Notification' in window)){ note('이 브라우저는 알림을 지원하지 않습니다',true); return; }
+  const r=await Notification.requestPermission();
+  note(r==='granted'?'알림이 켜졌습니다':'알림이 거부되었습니다',r!=='granted');
 };
 $('sPrepMin').onchange=()=>{ const pr=prepItem();
   if(pr&&+$('sPrepMin').value>0){ pr.std=+$('sPrepMin').value; save(); render(); } };
