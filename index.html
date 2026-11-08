@@ -294,7 +294,7 @@ select,.mins{border:1px solid var(--line);border-radius:6px;background:#fff;font
     <span class="nm2"><b id="cNm">대기 중</b><span id="cSub"></span></span>
     <button class="bTog" id="bTog" style="display:none">❚❚</button>
     <button class="bEnd" id="bEnd" style="display:none">End</button>
-    <button class="bPop" id="bPop" title="시계를 창으로 분리">⧉</button>
+    <button class="bPop" id="bPop" title="시계를 창으로 분리" style="display:none">⧉</button>
   </div>
 </div>
 
@@ -923,11 +923,10 @@ const PIP_CSS=`
   #p{background:rgba(255,255,255,.24);color:#fff;min-width:44px}
   #e{background:rgba(255,255,255,.95);color:#14181F}`;
 
+/* 분리 버튼은 되는 브라우저에서만 보인다 (PC 크롬·엣지) */
+if('documentPictureInPicture' in window) $('bPop').style.display='';
+
 async function popOut(){
-  if(!('documentPictureInPicture' in window)){
-    alert('이 브라우저는 시계 분리를 지원하지 않습니다.\n\nPC의 크롬 또는 엣지에서 쓸 수 있습니다. 폰에서는 설정에서 알림을 허용해 두면 앱이 뒤에 있어도 알람을 받습니다.');
-    return;
-  }
   if(pipWin){ pipWin.close(); return; }
   try{
     pipWin=await documentPictureInPicture.requestWindow({width:340,height:76});
