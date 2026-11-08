@@ -395,9 +395,18 @@ function note(t,warn){const e=$('saveState'); if(!e)return;
 
 /* ---- 하루 리셋: 매일 항목만 ---- */
 const KEEP_DAYS=400;
+function typeTotals(){                 // 유형별 집계 시간(분) — 시간제한은 상한까지만
+  const ty={task:0,timed:0,free:0,sleep:0};
+  items.forEach(i=>{
+    if(i.sleepItem){ ty.sleep+=i.ms; return; }
+    ty[i.type]+=countedMs(i);
+  });
+  Object.keys(ty).forEach(k=>ty[k]=Math.round(ty[k]/60000));
+  return ty;
+}
 function snapshot(){                   // 지우기 전에 그날 치를 한 줄로 남긴다
   if(!dayKey)return;
-  const rec={it:{},idle:Math.round(idleMs/60000)};
+  const rec={it:{},idle:Math.round(idleMs/60000),ty:typeTotals()};
   items.forEach(i=>{
     const m=Math.round(i.ms/60000);
     if(m>0||i.done) rec.it[i.id]={m,u:unitsOf(i),d:i.done?1:0};
@@ -493,7 +502,13 @@ function bind(){
     const it=items.find(i=>i.id==e.dataset.ty); it.type=e.value;
     if(!it.std)it.std=30;
     save();render();});
-  q('[data-st]',e=>e.oninput=()=>{items.find(i=>i.id==e.dataset.st).std=+e.value||null;save();});
+  q('[data-st]',e=>{
+    e.oninput=()=>{ const v=+e.value;            // 지우는 중에는 그대로 둔다
+      if(v>0){ items.find(i=>i.id==e.dataset.st).std=v; save(); } };
+    e.onblur=()=>{ const it=items.find(i=>i.id==e.dataset.st);
+      if(!(+e.value>0)) e.value=it.std??'';      // 비워둔 채 나가면 되돌린다
+      render(); };
+  });
   q('[data-al]',e=>e.onchange=()=>{items.find(i=>i.id==e.dataset.al).alarm=e.checked;save();});
   q('[data-dy]',e=>e.onchange=()=>{items.find(i=>i.id==e.dataset.dy).daily=e.checked;save();});
   q('[data-chk]',e=>e.onclick=()=>{
@@ -531,7 +546,7 @@ const dkey=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
 
 /* 오늘 치는 아직 저장 전이므로 메모리에서 만들어 붙인다 */
 function liveRec(){
-  const rec={it:{},idle:Math.round(idleMs/60000)};
+  const rec={it:{},idle:Math.round(idleMs/60000),ty:typeTotals()};
   items.forEach(i=>{const m=Math.round(i.ms/60000);
     if(m>0||i.done)rec.it[i.id]={m,u:unitsOf(i),d:i.done?1:0};});
   return rec;
@@ -564,6 +579,19 @@ const colVal=(c,id,f)=>{
     const e=r.it[id]; if(e)v+=f(e);});
   return any?v:null;
 };
+function colTy(c,key){
+  const ks=c.ks||[c.k]; let v=0, any=false;
+  ks.forEach(k=>{
+    const r=recOf(k); if(!r)return; any=true;
+    if(r.ty && r.ty[key]!=null){ v+=r.ty[key]; return; }
+    Object.entries(r.it||{}).forEach(([id,e])=>{      // 옛 기록 보정
+      const g=items.find(x=>x.id==id); if(!g)return;
+      const k2=g.sleepItem?'sleep':g.type;
+      if(k2===key) v+=e.m||0;
+    });
+  });
+  return any?v:null;
+}
 const colIdle=c=>{const ks=c.ks||[c.k]; let v=0,any=false;
   ks.forEach(k=>{const r=recOf(k); if(!r)return; any=true; v+=r.idle||0;});
   return any?v:null;};
@@ -592,7 +620,7 @@ function renderHist(){
   const dcount=cols.reduce((a,c)=>a+((c.ks?c.ks:[c.k]).filter(k=>recOf(k)).length),0);
   const idles=cols.map(colIdle);
   const idleSum=idles.reduce((a,v)=>a+(v||0),0);
-  const slp=cols.reduce((a,c)=>a+(colVal(c,sleepItem()?.id,e=>e.m)||0),0);
+  const slpT=cols.reduce((a,c)=>a+(colTy(c,'sleep')||0),0);
 
   $('hbody').innerHTML = !dcount
     ? `<div class="empty">아직 쌓인 기록이 없습니다.<br>하루가 지나면 여기에 모입니다.</div>`
@@ -611,16 +639,24 @@ function renderHist(){
           <tr class="gap"><td colspan="${cols.length+2}"></td></tr>
           ${body}
           <tr class="gap"><td colspan="${cols.length+2}"></td></tr>
+          ${[['task','완료과제','var(--task)'],['timed','시간제한','var(--timed)'],
+             ['free','다다익선','var(--free)']].map(([k,lb,col])=>{
+            const vs=cols.map(c=>colTy(c,k)), sum=vs.reduce((a,v)=>a+(v||0),0);
+            return `<tr><th class="nm2" style="color:${col}">${lb}(h)</th>
+              <td class="sum">${(sum/60).toFixed(0)}</td>
+              ${vs.map(v=>`<td style="color:${col};opacity:.85">${v===null?'·':(v/60).toFixed(1)}</td>`).join('')}</tr>`;
+          }).join('')}
+          <tr class="gap"><td colspan="${cols.length+2}"></td></tr>
           <tr><th class="nm2" style="color:var(--idle)">아이들(h)</th>
             <td class="sum">${(idleSum/60).toFixed(0)}</td>
             ${idles.map(v=>`<td style="color:var(--ink3)">${v===null?'·':(v/60).toFixed(1)}</td>`).join('')}</tr>
           <tr><th class="nm2" style="color:var(--idle)">수면(h)</th>
-            <td class="sum">${(slp/60).toFixed(0)}</td>
-            ${cols.map(c=>{const v=colVal(c,sleepItem()?.id,e=>e.m);
+            <td class="sum">${(slpT/60).toFixed(0)}</td>
+            ${cols.map(c=>{const v=colTy(c,'sleep');
               return `<td style="color:var(--ink3)">${v===null?'·':(v/60).toFixed(1)}</td>`;}).join('')}</tr>
         </tbody>
       </table>
-      <div class="hnote">숫자 = 실행건수 · 오늘 열은 진행 중인 값입니다.</div>`;
+      <div class="hnote">위는 실행건수 · 아래는 유형별 시간(h) · 오늘 열은 진행 중인 값입니다.</div>`;
 }
 $('hist').onclick=()=>{ renderHist(); $('hmodal').style.display='flex'; };
 $('closeHist').onclick=()=>$('hmodal').style.display='none';
@@ -719,11 +755,13 @@ function paint(){
       it ? it.name+' — 일시정지' : '대기 중', false, !!it);
     return;
   }
-  const T=TYPES[it.type], std=Math.max(1,(it.std||0)*60000);
+  const T=TYPES[it.type], ok=+it.std>0, std=Math.max(1,(it.std||0)*60000);
   const cyc=std-(it.ms%std);               // 다다익선 — 다음 1건까지 남은 시간
-  const shown = T.mode==='down' ? std-it.ms : T.mode==='cycle' ? cyc : it.ms;
-  const over  = T.deadline && it.ms>=std;
-  if(T.unit){                              // 배수를 지날 때마다 1건, 그때 알람
+  const shown = !ok ? it.ms
+    : T.mode==='down' ? std-it.ms : T.mode==='cycle' ? cyc : it.ms;
+  const over  = ok && T.deadline && it.ms>=std;
+  if(!ok){ /* 표준시간을 입력하는 중 — 아무 판정도 하지 않는다 */ }
+  else if(T.unit){                              // 배수를 지날 때마다 1건, 그때 알람
     const k=Math.floor(it.ms/std);
     if(k>(it.alarmN||0)){ it.alarmN=k; if(it.alarm)beep(it.name); needRender=true; }
   } else if(over&&!alarmed){               // 시간제한 — 채우면 자동 완료
