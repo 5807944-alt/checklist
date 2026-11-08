@@ -1,6 +1,6 @@
 /* 실행 체크리스트 — 오프라인 캐시
    앱 파일을 바꾼 뒤에는 아래 CACHE 숫자를 올려야 새 버전이 적용됩니다. */
-const CACHE = 'checklist-v8';
+const CACHE = 'checklist-v9';
 const SHELL = [
   './',
   './index.html',
