@@ -321,6 +321,7 @@ let items=[
 let idleMs=0, dayKey='', days={}, lastBackup='', alarmLv='보통';
 
 let active=null, running=false, tick0=0, alarmed=false, saveT=0, needRender=false;
+let wasActive=null, wasRunning=false, leftAt=0;
 const $=i=>document.getElementById(i);
 const pad=n=>String(n).padStart(2,'0');
 const fmt=ms=>{const s=Math.floor(Math.abs(ms)/1000);
@@ -353,8 +354,12 @@ function sleepStat(){
 function awakeMs(){
   return Math.max(1,(Date.now()-dayStartTime())-sleepStat().credit);
 }
-/* 아이들 = 아무것도 안 돌린 시간 + 지정시간을 넘긴 수면 */
-function idleTotal(){ return idleMs+sleepStat().excess; }
+/* 아이들 = 깨어 있던 시간 − 수면 외 항목에 쓴 시간.
+   누적하지 않고 빼서 구하므로 앱이 꺼져 있던 시간도 저절로 아이들이 된다. */
+function idleTotal(){
+  const used=items.reduce((a,i)=>a+(i.sleepItem?0:i.ms),0);
+  return Math.max(0, awakeMs()-used);
+}
 
 /* 실행건수 — 완료형은 1건, 누적형은 표준시간 배수만큼 */
 const unitsOf=it=>TYPES[it.type].unit
@@ -373,7 +378,8 @@ function tally(){
 
 /* ---- 저장 ---- */
 function save(){
-  try{localStorage.setItem(KEY,JSON.stringify({uid,items,idleMs,dayKey,dayBoundary,days,lastBackup,alarmLv}));
+  try{localStorage.setItem(KEY,JSON.stringify({uid,items,idleMs,dayKey,dayBoundary,days,lastBackup,alarmLv,
+      active,running,leftAt:Date.now()}));
     const t=new Date(); note(`${pad(t.getHours())}:${pad(t.getMinutes())} 저장`);}
   catch(e){note('저장 불가 — 브라우저가 막고 있습니다',true);}
 }
@@ -387,6 +393,7 @@ function load(){
     if(d.days&&typeof d.days==='object')days=d.days;
     if(d.lastBackup)lastBackup=d.lastBackup;
     if(d.alarmLv)alarmLv=d.alarmLv;
+    wasActive=d.active||null; wasRunning=!!d.running; leftAt=+d.leftAt||0;
     return true;}
   catch(e){return false;}
 }
@@ -406,7 +413,7 @@ function typeTotals(){                 // 유형별 집계 시간(분) — 시�
 }
 function snapshot(){                   // 지우기 전에 그날 치를 한 줄로 남긴다
   if(!dayKey)return;
-  const rec={it:{},idle:Math.round(idleMs/60000),ty:typeTotals()};
+  const rec={it:{},idle:Math.round(idleTotal()/60000),ty:typeTotals()};
   items.forEach(i=>{
     const m=Math.round(i.ms/60000);
     if(m>0||i.done) rec.it[i.id]={m,u:unitsOf(i),d:i.done?1:0};
@@ -546,7 +553,7 @@ const dkey=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
 
 /* 오늘 치는 아직 저장 전이므로 메모리에서 만들어 붙인다 */
 function liveRec(){
-  const rec={it:{},idle:Math.round(idleMs/60000),ty:typeTotals()};
+  const rec={it:{},idle:Math.round(idleTotal()/60000),ty:typeTotals()};
   items.forEach(i=>{const m=Math.round(i.ms/60000);
     if(m>0||i.done)rec.it[i.id]={m,u:unitsOf(i),d:i.done?1:0};});
   return rec;
@@ -715,7 +722,6 @@ $('bTog').onclick=()=>{ running=!running; save(); render(); };
 function loop(now){
   const dt=now-tick0; tick0=now;
   if(active&&running){ items.find(i=>i.id===active).ms+=dt; }
-  else { idleMs+=dt; }                  // 실행 중인 항목이 없으면 아이들
   if(now-saveT>5000){ saveT=now; save(); rollover(); }
   paint(); requestAnimationFrame(loop);
 }
@@ -1054,6 +1060,22 @@ $('doReset').onclick=()=>{
 
 (function(){const d=new Date();
   $('today').textContent=`${d.getMonth()+1}/${d.getDate()} (${'일월화수목금토'[d.getDay()]})`;})();
+const GAP_ASK=10*60000;                // 10분을 넘는 공백은 확인한다
+function resumeLast(){
+  if(!wasActive)return;
+  const it=items.find(i=>i.id===wasActive);
+  if(!it){ wasActive=null; return; }
+  const gap=leftAt?Date.now()-leftAt:0;
+  if(wasRunning && gap>0){
+    if(gap<=GAP_ASK) it.ms+=gap;         // 잠깐이면 그대로 이어 붙인다
+    else if(confirm(`'${it.name}' 실행 중에 앱이 닫혔습니다.\n자리를 비운 ${hm(gap)} 을 이 항목에 넣을까요?\n\n[취소] 를 누르면 아이들로 둡니다.`))
+      it.ms+=gap;
+  }
+  active=it.id; running=false;           // 멈춘 상태로 열고, ▶ 로 재개
+  idleFrom=Date.now();
+  wasActive=null;
+}
+
 /* 예전 저장본에는 수면·준비 항목이 없다 — 없으면 만들어 둔다 */
 function ensureSpecials(){
   if(!items.some(i=>i.sleepItem))
@@ -1067,6 +1089,7 @@ function ensureSpecials(){
 const had=load();
 ensureSpecials();
 rollover();
+resumeLast();
 syncSleepUI();
 render();
 note(had?'불러옴':'새 목록');
