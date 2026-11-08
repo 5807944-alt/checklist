@@ -245,6 +245,8 @@ select,.mins{border:1px solid var(--line);border-radius:6px;background:#fff;font
   <span><i class="tag g-free"></i>다다익선 — 표준시간마다 1건</span>
 </div>
 
+<div id="modalHost" style="position:relative;z-index:90"></div>
+
 <div class="modal" id="hmodal" style="display:none"><div class="box wide">
   <div class="hhead"><b>기록</b>
     <span class="seg"><button data-r="week" class="on">주</button><button data-r="month">월</button></span>
@@ -263,9 +265,13 @@ select,.mins{border:1px solid var(--line);border-radius:6px;background:#fff;font
   <label>준비·전환 표준시간 (분)
     <input type="number" id="sPrepMin" min="1"></label>
   <div id="sInfo"></div>
-  <div class="brow" style="margin-bottom:8px">
+  <div class="brow" style="margin-bottom:6px">
     <button class="ghost2" id="exp">내보내기</button>
     <button class="ghost2" id="imp">가져오기</button>
+  </div>
+  <div class="brow" style="margin-bottom:8px">
+    <button class="ghost2" id="txtExp">복사로 백업</button>
+    <button class="ghost2" id="txtImp">붙여넣기 복원</button>
   </div>
   <div class="brow">
     <button class="ghost" id="doReset">전체 초기화</button>
@@ -754,31 +760,74 @@ function doExport(){
   lastBackup=dayKey; nagOff=false; save(); checkNag();
   note('내보냄 · '+name);
 }
+const host=document.getElementById('modalHost');
+const closeModal=()=>host.innerHTML='';
+function backupJSON(){
+  const d=new Date();
+  return JSON.stringify({v:3,saved:d.toISOString(),uid,items,idleMs,dayKey,dayBoundary,days},null,2);
+}
+function applyImport(text,label){        // 파일·붙여넣기 공통 복원
+  let d;
+  try{ d=JSON.parse(text); }catch(e){ note('JSON 형식이 아닙니다',true); return false; }
+  if(!Array.isArray(d.items)||!d.items.every(i=>i&&typeof i.name==='string'&&TYPES[i.type])){
+    note('체크리스트 백업이 아닙니다',true); return false; }
+  if(!confirm(`${d.items.length}개 항목을 불러옵니다. 지금 목록은 사라집니다.`))return false;
+  release();
+  items=d.items.map((i,n)=>({id:n+1,name:i.name,type:i.type,std:i.std??null,
+    alarm:!!i.alarm,daily:!!i.daily,ms:+i.ms||0,done:!!i.done,
+    sleepItem:!!i.sleepItem,prepItem:!!i.prepItem}));
+  uid=items.length+1; idleMs=+d.idleMs||0;
+  if(d.days&&typeof d.days==='object')days=d.days;
+  if(d.lastBackup)lastBackup=d.lastBackup;
+  if(d.dayBoundary)dayBoundary=d.dayBoundary;
+  ensureSpecials(); save(); render(); checkNag();
+  note('가져옴'+(label?' · '+label:''));
+  return true;
+}
 $('exp').onclick=doExport;
 $('imp').onclick=()=>$('file').click();
 $('file').onchange=e=>{
   const f=e.target.files[0]; if(!f)return;
   const r=new FileReader();
-  r.onload=()=>{
-    try{
-      const d=JSON.parse(r.result);
-      if(!Array.isArray(d.items)||!d.items.every(i=>typeof i.name==='string'&&TYPES[i.type]))throw 0;
-      if(!confirm(`${d.items.length}개 항목을 불러옵니다. 지금 목록은 사라집니다.`))return;
-      release();
-      items=d.items.map((i,n)=>({id:n+1,name:i.name,type:i.type,std:i.std??null,
-        alarm:!!i.alarm,daily:!!i.daily,ms:+i.ms||0,done:!!i.done,
-        sleepItem:!!i.sleepItem,prepItem:!!i.prepItem}));
-      uid=items.length+1; idleMs=+d.idleMs||0;
-      if(d.days&&typeof d.days==='object')days=d.days;
-    if(d.lastBackup)lastBackup=d.lastBackup;
-      if(d.dayBoundary)dayBoundary=d.dayBoundary;
-      ensureSpecials();
-      save(); render(); note('가져옴 · '+f.name);
-    }catch(err){ note('읽을 수 없는 파일입니다',true); }
-    e.target.value='';
-  };
+  r.onload=()=>{ applyImport(r.result,f.name); e.target.value=''; };
   r.readAsText(f);
 };
+
+/* ---- 다운로드가 막힌 환경용: 글자로 백업·복원 ---- */
+function openText(mode){                 // 'copy' | 'paste'
+  const isCopy=mode==='copy';
+  $('modal').style.display='none';       // 설정 창을 닫고 그 위에 띄운다
+  host.innerHTML=`<div class="modal"><div class="box">
+    <h3>${isCopy?'백업 복사':'백업 붙여넣기'}</h3>
+    <p style="font-size:13.5px;color:var(--ink2);margin:0 0 10px;line-height:1.5">${isCopy
+      ? '아래 글자를 모두 복사해 메모장이나 메일에 붙여 두세요.'
+      : '복사해 둔 백업 글자를 붙여넣고 복원을 누르세요.'}</p>
+    <textarea id="tbox" rows="8" style="width:100%;font-family:var(--mono);font-size:12px;
+      border:1px solid var(--line);border-radius:8px;padding:9px"
+      ${isCopy?'readonly':'placeholder="여기에 붙여넣기"'}>${isCopy?esc(backupJSON()):''}</textarea>
+    <div class="brow">
+      <button class="ghost2" id="tCancel">닫기</button>
+      <button class="prim" id="tGo">${isCopy?'전체 복사':'복원'}</button>
+    </div></div></div>`;
+  const ta=host.querySelector('#tbox');
+  if(isCopy){ ta.focus(); ta.select(); }
+  host.querySelector('#tCancel').onclick=closeModal;
+  host.querySelector('#tGo').onclick=async()=>{
+    if(isCopy){
+      ta.select(); ta.setSelectionRange(0,ta.value.length);
+      let ok=false;
+      try{ await navigator.clipboard.writeText(ta.value); ok=true; }
+      catch(e){ try{ ok=document.execCommand('copy'); }catch(e2){} }
+      lastBackup=dayKey; nagOff=false; save(); checkNag();
+      note(ok?'클립보드에 복사됨':'복사 실패 — 글자를 길게 눌러 직접 복사하세요',!ok);
+      if(ok)closeModal();
+    }else{
+      if(applyImport(ta.value.trim(),'붙여넣기'))closeModal();
+    }
+  };
+}
+$('txtExp').onclick=()=>openText('copy');
+$('txtImp').onclick=()=>openText('paste');
 /* ---- 스크롤 위치 기억 ---- */
 const SKEY=KEY+'.scroll';
 let scrT=0;
